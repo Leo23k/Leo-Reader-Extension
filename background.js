@@ -10,6 +10,7 @@ let viewMode = "side";
 async function syncPanelBehavior() {
   const { readerSettings = {} } = await chrome.storage.local.get("readerSettings");
   viewMode = readerSettings.viewMode || "side";
+  await chrome.sidePanel.setOptions({ path: "reader.html", enabled: true });
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
 }
 syncPanelBehavior();
@@ -21,9 +22,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 function openTabPanel(tabId) {
-  const options = chrome.sidePanel.setOptions({ tabId, path: `reader.html?tabId=${tabId}`, enabled: true });
-  const opening = chrome.sidePanel.open({ tabId });
-  return Promise.all([options, opening]);
+  return chrome.sidePanel.open({ tabId });
 }
 
 async function openReader(tab, mode = "auto") {
@@ -46,4 +45,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const openingPanel = viewMode === "full" ? null : openTabPanel(tab.id);
   openReader(tab, info.menuItemId === "leo-read-selection" ? "selection" : "auto")
     .then(() => openingPanel);
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type !== "leo-reader-read-selection" || !sender.tab?.id || !message.text?.trim()) return;
+  const selection = { text: message.text.trim(), title: message.title, url: message.url };
+  chrome.storage.local.set({ [`pendingRead:${sender.tab.id}`]: { ...selection, mode: "selection", target: "overlay", tabId: sender.tab.id, nonce: `${Date.now()}-${Math.random()}` } })
+    .then(() => sendResponse({ tabId: sender.tab.id }), error => sendResponse({ error: error.message }));
+  return true;
 });

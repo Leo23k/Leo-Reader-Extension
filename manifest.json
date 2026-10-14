@@ -7,6 +7,11 @@
   "permissions": ["activeTab", "scripting", "storage", "sidePanel", "tts", "contextMenus"],
   "host_permissions": ["https://*.webnovel.vn/*", "http://127.0.0.1:17843/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "side_panel": { "default_path": "reader.html" },
+  "web_accessible_resources": [{
+    "resources": ["reader.html"],
+    "matches": ["http://*/*", "https://*/*"]
+  }],
   "action": {
     "default_title": "Mở chế độ đọc",
     "default_icon": {

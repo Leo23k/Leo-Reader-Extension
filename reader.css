@@ -62,6 +62,16 @@ body[data-view="full"] .topbar { min-height: 64px; padding-inline: max(24px, cal
 body[data-view="full"] .reader { height: calc(100vh - 116px); }
 body[data-view="full"] .article { width: min(100%, 980px); padding: 48px 56px 64px; }
 body[data-view="full"] .full-only { display: inline-flex; }
+body[data-view="overlay"] { min-width: 320px; height: 100vh; overflow: visible; color-scheme: dark; --surface: #3c4043; --page: #3c4043; --text: #e8eaed; --muted: #bdc1c6; --border: transparent; background: transparent; }
+html:has(body[data-view="overlay"]) { background: transparent; }
+body[data-view="overlay"] .topbar { height: 64px; min-height: 64px; padding: 0 14px; border: 0; background: #3c4043; color: #fff; }
+body[data-view="overlay"] .toolbar { flex: 1; justify-content: space-between; }
+body[data-view="overlay"] .playback { margin-inline: auto; }
+body[data-view="overlay"] .full-only { display: inline-flex; }
+body[data-view="overlay"] .reader, body[data-view="overlay"] .player { display: none; }
+body[data-view="overlay"]:not(.selection-player) .topbar { display: none; }
+body[data-view="overlay"] #refresh, body[data-view="overlay"] #font-smaller, body[data-view="overlay"] #font-larger, body[data-view="overlay"] #view-setting { display: none; }
+body[data-view="overlay"] .settings { top: 64px; max-height: calc(100vh - 72px); overflow: auto; }
 .playback { display: flex; align-items: center; gap: 1px; padding: 2px 4px; border-radius: 20px; background: #0b57d0; color: #fff; }
 .playback .icon-button { width: 28px; height: 30px; color: #fff; }
 .playback .icon-button:hover { background: #ffffff24; }

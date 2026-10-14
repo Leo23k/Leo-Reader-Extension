@@ -28,7 +28,7 @@ function applySettings() {
   body.dataset.theme = settings.theme;
   body.dataset.font = settings.font;
   body.dataset.highlight = settings.highlight;
-  body.dataset.view = new URLSearchParams(location.search).get("view") || "side";
+  body.dataset.view = window.parent !== window ? "overlay" : new URLSearchParams(location.search).get("view") || "side";
   body.classList.toggle("line-focus", settings.lineEffect);
   body.style.setProperty("--font-size", `${settings.size}px`);
   body.style.setProperty("--line-height", settings.line);
@@ -238,6 +238,93 @@ function readPageFromClick(mode) {
   });
 }
 
+async function installSelectionButton(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const existingButton = window.__leoReaderSelectionButton;
+      if (window.__leoReaderSelectionButtonVersion === 3 && existingButton?.isConnected) {
+        return;
+      }
+      window.__leoReaderSelectionHost?.remove();
+      document.getElementById("leo-reader-selection-host")?.remove();
+      existingButton?.remove();
+      document.getElementById("leo-reader-selection-button")?.remove();
+      const host = document.createElement("div");
+      host.id = "leo-reader-selection-host";
+      host.style.cssText = "position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important";
+      const shadow = host.attachShadow({ mode: "closed" });
+      const button = document.createElement("button");
+      window.__leoReaderSelectionButton = button;
+      window.__leoReaderSelectionHost = host;
+      window.__leoReaderSelectionButtonVersion = 3;
+      button.id = "leo-reader-selection-button";
+      button.type = "button";
+      button.title = "Đọc đoạn văn bản đã chọn";
+      button.setAttribute("aria-label", button.title);
+      button.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 9v6h4l5 4V5L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05a4.5 4.5 0 0 0 2.5-4.02zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z"/></svg>';
+      button.style.cssText = "position:fixed;z-index:2147483647;display:none;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:#0b57d0;color:#fff;box-shadow:0 2px 8px #0005;cursor:pointer;pointer-events:auto";
+      button.addEventListener("pointerdown", event => event.preventDefault());
+      button.addEventListener("click", () => {
+        if (!button.dataset.text) return;
+        chrome.runtime.sendMessage({ type: "leo-reader-read-selection", text: button.dataset.text, title: document.title, url: location.href }).then(({ tabId }) => {
+          if (!Number.isInteger(tabId)) throw new Error("Không lưu được đoạn văn bản đã chọn.");
+          if (!window.__leoReaderPlayerHost?.isConnected) {
+            document.getElementById("leo-reader-player-overlay")?.remove();
+            const host = document.createElement("div");
+            host.id = "leo-reader-player-overlay";
+            host.style.cssText = "position:fixed!important;z-index:2147483647!important;inset:0 0 auto!important;width:100vw!important;height:64px!important";
+            const shadow = host.attachShadow({ mode: "closed" });
+            const frame = document.createElement("iframe");
+            frame.title = "Leo Reader player";
+            frame.allow = "autoplay";
+            frame.src = chrome.runtime.getURL(`reader.html?view=overlay&tabId=${tabId}`);
+            frame.style.cssText = "display:block!important;width:100%!important;height:64px!important;border:0!important";
+            shadow.append(frame);
+            document.documentElement.append(host);
+            window.__leoReaderPlayerHost = host;
+            window.__leoReaderPlayerFrame = frame;
+          }
+          button.style.display = "none";
+        }).catch(() => { button.style.display = "flex"; });
+      });
+      shadow.append(button);
+      document.documentElement.append(host);
+      const updateButton = () => {
+        const selected = window.getSelection();
+        const text = selected?.toString().trim();
+        const range = selected?.rangeCount ? selected.getRangeAt(0) : null;
+        const bounds = range?.getBoundingClientRect();
+        const rect = bounds && (bounds.width || bounds.height) ? bounds : range?.getClientRects()[0];
+        if (!text || !rect || (!rect.width && !rect.height)) { button.style.display = "none"; return; }
+        button.dataset.text = text;
+        button.style.left = `${Math.max(8, Math.min(window.innerWidth - 36, rect.left + rect.width / 2 - 14))}px`;
+        button.style.top = `${Math.max(8, rect.top - 36)}px`;
+        button.style.display = "flex";
+      };
+      const scheduleUpdate = () => setTimeout(updateButton, 0);
+      document.addEventListener("selectionchange", scheduleUpdate);
+      document.addEventListener("pointerup", scheduleUpdate, true);
+      document.addEventListener("mouseup", scheduleUpdate, true);
+      document.addEventListener("keyup", scheduleUpdate, true);
+      window.addEventListener("message", event => {
+        if (event.source !== window.__leoReaderPlayerFrame?.contentWindow) return;
+        if (event.data?.type === "leo-reader-resize-overlay") {
+          const height = event.data.open ? "460px" : "64px";
+          window.__leoReaderPlayerHost.style.height = height;
+          window.__leoReaderPlayerFrame.style.height = height;
+          return;
+        }
+        if (event.data?.type !== "leo-reader-close-overlay") return;
+        window.__leoReaderPlayerHost.remove();
+        window.__leoReaderPlayerHost = null;
+        window.__leoReaderPlayerFrame = null;
+      });
+      requestAnimationFrame(updateButton);
+    }
+  });
+}
+
 async function getPage(mode, refresh = false) {
   try {
     const tabSessionKey = sessionKey(sourceTabId);
@@ -259,6 +346,7 @@ async function getPage(mode, refresh = false) {
       } catch { /* Skip a tab id saved by a closed or replaced tab. */ }
     }
     if (!tabId) throw new Error("Không tìm thấy trang gốc để đọc.");
+    await installSelectionButton(tabId);
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId },
       func: readMode => {
@@ -717,10 +805,9 @@ function togglePlayback() {
 }
 
 async function changeViewMode(mode) {
-  const panelOptions = mode === "side" && body.dataset.view === "full" && sourceTabId
-    ? chrome.sidePanel.setOptions({ tabId: sourceTabId, path: `reader.html?tabId=${sourceTabId}`, enabled: true })
+  const openingPanel = mode === "side" && body.dataset.view === "full" && sourceTabId
+    ? chrome.sidePanel.open({ tabId: sourceTabId })
     : null;
-  const openingPanel = panelOptions ? chrome.sidePanel.open({ tabId: sourceTabId }) : null;
   settings.viewMode = mode;
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
   await saveSettings();
@@ -728,7 +815,7 @@ async function changeViewMode(mode) {
     await saveSession();
     await chrome.tabs.create({ url: chrome.runtime.getURL(`reader.html?view=full&tabId=${sourceTabId}`) });
   } else if (mode === "side" && body.dataset.view === "full") {
-    if (openingPanel) await Promise.all([panelOptions, openingPanel]);
+    if (openingPanel) await openingPanel;
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (tab?.id) await chrome.tabs.remove(tab.id);
   }
@@ -737,7 +824,10 @@ async function changeViewMode(mode) {
 $("#read-page").addEventListener("click", () => readPageFromClick("article"));
 $("#read-selection").addEventListener("click", () => readPageFromClick("selection"));
 $("#refresh").addEventListener("click", () => readPageFromClick("article"));
-$("#settings-toggle").addEventListener("click", () => { $("#settings").hidden = !$("#settings").hidden; });
+$("#settings-toggle").addEventListener("click", () => {
+  $("#settings").hidden = !$("#settings").hidden;
+  if (body.dataset.view === "overlay") window.parent.postMessage({ type: "leo-reader-resize-overlay", open: !$("#settings").hidden }, "*");
+});
 $("#font-smaller").addEventListener("click", () => changeSize(-1));
 $("#font-larger").addEventListener("click", () => changeSize(1));
 function changeSize(delta) { settings.size = Math.max(14, Math.min(32, settings.size + delta)); applySettings(); saveSettings(); }
@@ -745,9 +835,12 @@ $("#play-pause").addEventListener("click", togglePlayback);
 $("#previous").addEventListener("click", () => speak(Math.max(0, current - 1)));
 $("#next").addEventListener("click", () => speak(Math.min(sentences.length - 1, current + 1)));
 $("#close-full").addEventListener("click", async () => {
-  const panelOptions = sourceTabId ? chrome.sidePanel.setOptions({ tabId: sourceTabId, path: `reader.html?tabId=${sourceTabId}`, enabled: true }) : null;
-  const openingPanel = sourceTabId ? chrome.sidePanel.open({ tabId: sourceTabId }) : null;
-  if (openingPanel) await Promise.all([panelOptions, openingPanel]);
+  if (body.dataset.view === "overlay") {
+    stopSpeech();
+    window.parent.postMessage({ type: "leo-reader-close-overlay" }, "*");
+    return;
+  }
+  if (sourceTabId) await chrome.sidePanel.open({ tabId: sourceTabId });
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (tab?.id) await chrome.tabs.remove(tab.id);
 });
@@ -782,7 +875,11 @@ async function init() {
   const requestedTabId = Number(new URLSearchParams(location.search).get("tabId"));
   let tab = Number.isInteger(requestedTabId) && requestedTabId > 0 ? await chrome.tabs.get(requestedTabId).catch(() => null) : null;
   if (!tab) [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (tab?.url && /^https?:/.test(tab.url)) { sourceUrl = tab.url; sourceTabId = tab.id; }
+  if (tab?.url && /^https?:/.test(tab.url)) {
+    sourceUrl = tab.url;
+    sourceTabId = tab.id;
+    if (body.dataset.view !== "overlay") installSelectionButton(tab.id).catch(error => { status.textContent = error.message || "Không thể hiện nút đọc đoạn đã chọn trên trang này."; });
+  }
   const tabSessionKey = sessionKey(sourceTabId);
   const tabPendingKey = pendingReadKey(sourceTabId);
   const readerStorage = await chrome.storage.local.get([...new Set([tabSessionKey, tabPendingKey, "readingSession", "pendingRead"])]);
@@ -800,7 +897,7 @@ async function init() {
     await setArticle(previous.title, previous.html, previous.url, previous.current || 0, tab.id);
     status.textContent = `${sentences.length} câu · đã khôi phục vị trí đọc`;
   }
-  else if (body.dataset.view !== "full" && tab?.id && /^https?:/.test(tab.url || "")) getPage("auto");
+  else if (body.dataset.view === "side" && tab?.id && /^https?:/.test(tab.url || "")) getPage("auto");
 }
 
 window.addEventListener("pagehide", () => {
@@ -826,15 +923,30 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   scheduleSourceRefresh(tabId);
 });
 
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  if (body.dataset.view !== "side" || speaking || paused || tabId === sourceTabId) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab?.url || !/^https?:/.test(tab.url)) return;
+  sourceTabId = tab.id;
+  sourceUrl = tab.url;
+  getPage("auto");
+});
+
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === "leo-reader-content-changed" && sender.tab?.id === sourceTabId) scheduleSourceRefresh(sourceTabId);
 });
 
 function handlePendingRead(pending) {
   if (pending.tabId !== sourceTabId) return;
+  if (pending.target === "overlay" && body.dataset.view !== "overlay") return;
   if (pending.nonce === lastReadNonce) return;
   lastReadNonce = pending.nonce;
-  getPage(pending.mode);
+  if (pending.mode === "selection" && pending.text?.trim()) {
+    body.classList.add("selection-player");
+    const text = pending.text.trim().replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+    setArticle(pending.title || "Đoạn văn bản đã chọn", `<p>${text.replace(/\n+/g, "<br>")}</p>`, pending.url || sourceUrl, 0, pending.tabId)
+      .then(() => speak(0)).catch(error => { status.textContent = error.message || "Không thể phát đoạn đã chọn."; });
+  } else getPage(pending.mode);
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
