@@ -10,7 +10,6 @@ let viewMode = "side";
 async function syncPanelBehavior() {
   const { readerSettings = {} } = await chrome.storage.local.get("readerSettings");
   viewMode = readerSettings.viewMode || "side";
-  await chrome.sidePanel.setOptions({ enabled: false });
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
 }
 syncPanelBehavior();

@@ -720,7 +720,7 @@ $("#show-images").addEventListener("change", event => updateSetting("images", ev
 $("#highlight").addEventListener("change", event => updateSetting("highlight", event.target.value));
 $("#view-mode").addEventListener("change", event => changeViewMode(event.target.value));
 async function updateSetting(key, value) { settings[key] = value; applySettings(); await saveSettings(); }
-$("#reset-settings").addEventListener("click", async () => { settings = { ...defaults }; applySettings(); await chrome.sidePanel.setOptions({ enabled: false }); await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); await saveSettings(); });
+$("#reset-settings").addEventListener("click", async () => { settings = { ...defaults }; applySettings(); await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }); await saveSettings(); });
 articleBody.addEventListener("click", event => {
   if (event.target.closest("a")) return;
   const sentence = event.target.closest(".sentence");
