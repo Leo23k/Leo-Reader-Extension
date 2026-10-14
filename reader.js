@@ -275,8 +275,24 @@ async function getPage(mode, refresh = false) {
           ".chapter-content", ".chapter__content", ".reader__content", ".read-content",
           ".content-chapter", ".content-body", ".entry-content", ".post-content", "article"
         ];
-        const root = candidates.map(selector => document.querySelector(selector)).find(node => node && visible(node) && node.innerText.trim().length > 160)
+        const findRoot = () => candidates.map(selector => document.querySelector(selector)).find(node => node && visible(node) && node.innerText.trim().length > 160)
           || document.querySelector("main") || document.querySelector('[role="main"]') || document.body;
+        const root = findRoot();
+        if (!window.__leoReaderContentObserver) {
+          let previousText = findRoot().innerText.trim();
+          let changeTimer;
+          const observer = new MutationObserver(() => {
+            clearTimeout(changeTimer);
+            changeTimer = setTimeout(() => {
+              const nextText = findRoot().innerText.trim();
+              if (nextText === previousText) return;
+              previousText = nextText;
+              try { chrome.runtime.sendMessage({ type: "leo-reader-content-changed" }).catch(() => {}); } catch {}
+            }, 700);
+          });
+          observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+          window.__leoReaderContentObserver = observer;
+        }
         const locked = /webnovel\.vn$/i.test(location.hostname)
           && !candidates.some(selector => {
             const node = document.querySelector(selector);
@@ -792,14 +808,26 @@ window.addEventListener("pagehide", () => {
   if (!article.hidden) saveSession();
 });
 
+function scheduleSourceRefresh(tabId) {
+  clearTimeout(pageRefreshTimer);
+  pageRefreshTimer = setTimeout(async () => {
+    if (tabId !== sourceTabId) return;
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.url || !/^https?:/.test(tab.url)) return;
+    sourceUrl = tab.url;
+    getPage("auto", true);
+  }, 700);
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (tabId !== sourceTabId || !tab.url || !/^https?:/.test(tab.url)) return;
   sourceUrl = tab.url;
   if (changeInfo.status !== "complete" && !(changeInfo.url && tab.status === "complete")) return;
-  clearTimeout(pageRefreshTimer);
-  pageRefreshTimer = setTimeout(() => {
-    if (tabId === sourceTabId && sourceUrl === tab.url) getPage("auto", true);
-  }, 700);
+  scheduleSourceRefresh(tabId);
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type === "leo-reader-content-changed" && sender.tab?.id === sourceTabId) scheduleSourceRefresh(sourceTabId);
 });
 
 function handlePendingRead(pending) {
