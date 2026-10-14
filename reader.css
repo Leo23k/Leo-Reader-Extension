@@ -32,15 +32,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .settings .check input { accent-color: #1a73e8; }
 .reset { justify-self: start; padding: 5px 0; border: 0; background: transparent; color: #1a73e8; }
 .reader { height: calc(100vh - 108px); overflow: auto; background: var(--surface); }
-.empty-state { display: flex; max-width: 330px; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: 32px 24px; text-align: center; }
-.empty-state[hidden] { display: none; }
-.empty-icon { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 16px; border-radius: 50%; background: var(--hover); color: var(--muted); font-size: 26px; }
-.empty-state h1 { margin: 0 0 8px; font-size: 21px; font-weight: 500; }
-.empty-state p { margin: 0 0 20px; color: var(--muted); line-height: 1.6; }
-.action-button, .link-button { min-height: 36px; padding: 0 14px; border: 0; border-radius: 18px; font-weight: 500; }
-.action-button { background: #1a73e8; color: #fff; }
-.action-button:hover { background: #1765cc; }
-.link-button { margin-top: 6px; background: transparent; color: #1a73e8; }
+.empty-state { display: none; }
 .article { width: min(100%, 1000px); margin: 0 auto; padding: 30px 20px 40px; }
 .article > h1 { margin: 0 0 24px; font-size: calc(var(--font-size) * 1.6); font-weight: 600; line-height: 1.25; }
 .article-body { font-size: var(--font-size); line-height: var(--line-height); letter-spacing: var(--letter-spacing); overflow-wrap: anywhere; }
