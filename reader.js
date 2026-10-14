@@ -4,7 +4,8 @@ const article = $("#article");
 const articleBody = $("#article-body");
 const status = $("#status");
 const edgeAudio = $("#edge-audio");
-const sessionKey = "readingSession";
+const sessionKey = tabId => tabId ? `readingSession:${tabId}` : "readingSession";
+const pendingReadKey = tabId => tabId ? `pendingRead:${tabId}` : "pendingRead";
 const settingsKey = "readerSettings";
 const defaults = { font: "sans", theme: "light", size: 18, line: "1.8", letter: "0", links: true, images: true, highlight: "sentence", lineEffect: false, speed: 1.25, viewMode: "side" };
 let settings = { ...defaults };
@@ -196,7 +197,7 @@ function setCurrent(index, charIndex = -1) {
 }
 
 async function saveSession() {
-  await chrome.storage.local.set({ [sessionKey]: { title: $("#article-title").textContent, html: articleBody.innerHTML, current, url: sourceUrl, tabId: sourceTabId } });
+  await chrome.storage.local.set({ [sessionKey(sourceTabId)]: { title: $("#article-title").textContent, html: articleBody.innerHTML, current, url: sourceUrl, tabId: sourceTabId } });
 }
 
 async function setArticle(title, markup, pageUrl, resumeAt = 0, tabId = null) {
@@ -238,13 +239,15 @@ function readPageFromClick(mode) {
 
 async function getPage(mode) {
   try {
-    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    const { pendingRead, [sessionKey]: previous } = await chrome.storage.local.get(["pendingRead", sessionKey]);
-    const pendingMatches = pendingRead?.tabId && (pendingRead.url === activeTab?.url || activeTab?.url?.startsWith("chrome-extension://"));
+    const tabSessionKey = sessionKey(sourceTabId);
+    const tabPendingKey = pendingReadKey(sourceTabId);
+    const stored = await chrome.storage.local.get([...new Set([tabSessionKey, tabPendingKey, "readingSession", "pendingRead"])]);
+    const pendingRead = stored[tabPendingKey] || (stored.pendingRead?.tabId === sourceTabId ? stored.pendingRead : null);
+    const pendingStorageKey = stored[tabPendingKey] ? tabPendingKey : "pendingRead";
+    const previous = stored[tabSessionKey] || (stored.readingSession?.tabId === sourceTabId ? stored.readingSession : null);
     const candidates = [...new Set([
-      activeTab?.url && /^https?:/.test(activeTab.url) ? activeTab.id : null,
-      pendingMatches ? pendingRead.tabId : null,
       sourceTabId,
+      pendingRead?.tabId === sourceTabId ? pendingRead.tabId : null,
       previous?.tabId
     ].filter(Number.isInteger))];
     let tabId;
@@ -298,7 +301,7 @@ async function getPage(mode) {
     if (result.locked) { status.textContent = "Chương này chưa hiển thị nội dung. Hãy đăng nhập hoặc mở chương trên trang rồi thử lại."; return; }
     if (!result.html) { status.textContent = "Hãy bôi đen đoạn văn bản trên trang trước."; return; }
     const pending = pendingRead?.url === result.url;
-    if (pending) await chrome.storage.local.remove("pendingRead");
+    if (pending) await chrome.storage.local.remove(pendingStorageKey);
     if (mode === "auto" && !result.selected && previous?.url === result.url) {
       articleBody.replaceChildren(safeArticle(previous.html, result.url));
       decorateSentences(articleBody);
@@ -671,7 +674,7 @@ function togglePlayback() {
 
 async function changeViewMode(mode) {
   const panelOptions = mode === "side" && body.dataset.view === "full" && sourceTabId
-    ? chrome.sidePanel.setOptions({ tabId: sourceTabId, path: "reader.html", enabled: true })
+    ? chrome.sidePanel.setOptions({ tabId: sourceTabId, path: `reader.html?tabId=${sourceTabId}`, enabled: true })
     : null;
   const openingPanel = panelOptions ? chrome.sidePanel.open({ tabId: sourceTabId }) : null;
   settings.viewMode = mode;
@@ -679,7 +682,7 @@ async function changeViewMode(mode) {
   await saveSettings();
   if (mode === "full" && body.dataset.view !== "full") {
     await saveSession();
-    await chrome.tabs.create({ url: chrome.runtime.getURL("reader.html?view=full") });
+    await chrome.tabs.create({ url: chrome.runtime.getURL(`reader.html?view=full&tabId=${sourceTabId}`) });
   } else if (mode === "side" && body.dataset.view === "full") {
     if (openingPanel) await Promise.all([panelOptions, openingPanel]);
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -698,7 +701,7 @@ $("#play-pause").addEventListener("click", togglePlayback);
 $("#previous").addEventListener("click", () => speak(Math.max(0, current - 1)));
 $("#next").addEventListener("click", () => speak(Math.min(sentences.length - 1, current + 1)));
 $("#close-full").addEventListener("click", async () => {
-  const panelOptions = sourceTabId ? chrome.sidePanel.setOptions({ tabId: sourceTabId, path: "reader.html", enabled: true }) : null;
+  const panelOptions = sourceTabId ? chrome.sidePanel.setOptions({ tabId: sourceTabId, path: `reader.html?tabId=${sourceTabId}`, enabled: true }) : null;
   const openingPanel = sourceTabId ? chrome.sidePanel.open({ tabId: sourceTabId }) : null;
   if (openingPanel) await Promise.all([panelOptions, openingPanel]);
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -732,10 +735,16 @@ async function init() {
   await loadVoices();
   if (chrome.tts?.onVoicesChanged) chrome.tts.onVoicesChanged.addListener(loadVoices);
   if (window.speechSynthesis) speechSynthesis.addEventListener("voiceschanged", loadVoices);
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const requestedTabId = Number(new URLSearchParams(location.search).get("tabId"));
+  let tab = Number.isInteger(requestedTabId) && requestedTabId > 0 ? await chrome.tabs.get(requestedTabId).catch(() => null) : null;
+  if (!tab) [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (tab?.url && /^https?:/.test(tab.url)) { sourceUrl = tab.url; sourceTabId = tab.id; }
-  const { pendingRead, [sessionKey]: previous } = await chrome.storage.local.get(["pendingRead", sessionKey]);
-  if (body.dataset.view === "full" && pendingRead?.tabId) {
+  const tabSessionKey = sessionKey(sourceTabId);
+  const tabPendingKey = pendingReadKey(sourceTabId);
+  const readerStorage = await chrome.storage.local.get([...new Set([tabSessionKey, tabPendingKey, "readingSession", "pendingRead"])]);
+  const pendingRead = readerStorage[tabPendingKey] || (readerStorage.pendingRead?.tabId === sourceTabId ? readerStorage.pendingRead : null);
+  const previous = readerStorage[tabSessionKey] || (readerStorage.readingSession?.tabId === sourceTabId ? readerStorage.readingSession : null);
+  if (body.dataset.view === "full" && pendingRead?.tabId === sourceTabId) {
     handlePendingRead(pendingRead);
   } else if (body.dataset.view === "full" && previous?.html) {
     sourceUrl = previous.url || "";
@@ -755,27 +764,19 @@ window.addEventListener("pagehide", () => {
   if (!article.hidden) saveSession();
 });
 
-chrome.tabs.onActivated.addListener(({ tabId }) => {
-  chrome.tabs.get(tabId).then(tab => {
-    if (tab.url && /^https?:/.test(tab.url)) { sourceUrl = tab.url; sourceTabId = tab.id; }
-  });
-});
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tab.active && tab.url && /^https?:/.test(tab.url)) { sourceUrl = tab.url; sourceTabId = tabId; }
+  if (tabId === sourceTabId && tab.url && /^https?:/.test(tab.url)) sourceUrl = tab.url;
 });
 
 function handlePendingRead(pending) {
+  if (pending.tabId !== sourceTabId) return;
   if (pending.nonce === lastReadNonce) return;
   lastReadNonce = pending.nonce;
   getPage(pending.mode);
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.pendingRead?.newValue) {
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
-      if (tab?.url === changes.pendingRead.newValue.url) handlePendingRead(changes.pendingRead.newValue);
-    });
-  }
+  if (area === "local" && changes[pendingReadKey(sourceTabId)]?.newValue) handlePendingRead(changes[pendingReadKey(sourceTabId)].newValue);
 });
 
 init();

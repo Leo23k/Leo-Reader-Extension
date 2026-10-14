@@ -22,7 +22,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 function openTabPanel(tabId) {
-  const options = chrome.sidePanel.setOptions({ tabId, path: "reader.html", enabled: true });
+  const options = chrome.sidePanel.setOptions({ tabId, path: `reader.html?tabId=${tabId}`, enabled: true });
   const opening = chrome.sidePanel.open({ tabId });
   return Promise.all([options, opening]);
 }
@@ -31,9 +31,9 @@ async function openReader(tab, mode = "auto") {
   if (!tab?.id) return;
   const { readerSettings = {} } = await chrome.storage.local.get("readerSettings");
   viewMode = readerSettings.viewMode || "side";
-  await chrome.storage.local.set({ pendingRead: { mode, url: tab.url, tabId: tab.id, nonce: Date.now() } });
+  await chrome.storage.local.set({ [`pendingRead:${tab.id}`]: { mode, url: tab.url, tabId: tab.id, nonce: Date.now() } });
   if (readerSettings.viewMode === "full") {
-    await chrome.tabs.create({ url: chrome.runtime.getURL("reader.html?view=full") });
+    await chrome.tabs.create({ url: chrome.runtime.getURL(`reader.html?view=full&tabId=${tab.id}`) });
   }
 }
 
