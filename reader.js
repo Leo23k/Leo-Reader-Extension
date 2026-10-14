@@ -22,6 +22,7 @@ let lastReadNonce = 0;
 let speechToken = 0;
 let edgeWords = [];
 let edgeAudioUrl = "";
+let pageRefreshTimer = null;
 
 function applySettings() {
   body.dataset.theme = settings.theme;
@@ -237,7 +238,7 @@ function readPageFromClick(mode) {
   });
 }
 
-async function getPage(mode) {
+async function getPage(mode, refresh = false) {
   try {
     const tabSessionKey = sessionKey(sourceTabId);
     const tabPendingKey = pendingReadKey(sourceTabId);
@@ -298,11 +299,37 @@ async function getPage(mode) {
       },
       args: [mode]
     });
-    if (result.locked) { status.textContent = "Chương này chưa hiển thị nội dung. Hãy đăng nhập hoặc mở chương trên trang rồi thử lại."; return; }
-    if (!result.html) { status.textContent = "Hãy bôi đen đoạn văn bản trên trang trước."; return; }
+    if (result.locked) {
+      stopSpeech();
+      await chrome.storage.local.remove(tabSessionKey);
+      articleBody.replaceChildren();
+      sentences = [];
+      sentenceSpans = [];
+      article.hidden = true;
+      $("#empty-state").hidden = false;
+      $("#progress").max = "0";
+      setCurrent(0);
+      status.textContent = "Chương này chưa hiển thị nội dung. Hãy đăng nhập hoặc mở chương trên trang rồi thử lại.";
+      return;
+    }
+    if (!result.html) {
+      if (refresh) {
+        stopSpeech();
+        await chrome.storage.local.remove(tabSessionKey);
+        articleBody.replaceChildren();
+        sentences = [];
+        sentenceSpans = [];
+        article.hidden = true;
+        $("#empty-state").hidden = false;
+        $("#progress").max = "0";
+        setCurrent(0);
+      }
+      status.textContent = mode === "selection" ? "Hãy bôi đen đoạn văn bản trên trang trước." : "Không tìm thấy nội dung đọc được trên trang này.";
+      return;
+    }
     const pending = pendingRead?.url === result.url;
     if (pending) await chrome.storage.local.remove(pendingStorageKey);
-    if (mode === "auto" && !result.selected && previous?.url === result.url) {
+    if (!refresh && mode === "auto" && !result.selected && previous?.url === result.url) {
       articleBody.replaceChildren(safeArticle(previous.html, result.url));
       decorateSentences(articleBody);
       $("#article-title").textContent = previous.title || result.title;
@@ -316,7 +343,8 @@ async function getPage(mode) {
       status.textContent = `${sentences.length} câu · đã khôi phục vị trí đọc`;
       return;
     }
-    await setArticle(result.title, result.html, result.url, 0, tabId);
+    const resumeAt = previous?.url === result.url ? previous.current || 0 : 0;
+    await setArticle(result.title, result.html, result.url, resumeAt, tabId);
   } catch (error) {
     status.textContent = error.message || "Không thể đọc trang này.";
   }
@@ -765,7 +793,13 @@ window.addEventListener("pagehide", () => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tabId === sourceTabId && tab.url && /^https?:/.test(tab.url)) sourceUrl = tab.url;
+  if (tabId !== sourceTabId || !tab.url || !/^https?:/.test(tab.url)) return;
+  sourceUrl = tab.url;
+  if (changeInfo.status !== "complete" && !(changeInfo.url && tab.status === "complete")) return;
+  clearTimeout(pageRefreshTimer);
+  pageRefreshTimer = setTimeout(() => {
+    if (tabId === sourceTabId && sourceUrl === tab.url) getPage("auto", true);
+  }, 700);
 });
 
 function handlePendingRead(pending) {
